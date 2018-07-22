@@ -9,6 +9,15 @@ var raf = require('random-access-file')
 var randombytes = require('randombytes')
 var rimraf = require('rimraf')
 var thunky = require('thunky')
+var toWriteFiles = {}
+var queue = require('async.queue')
+
+var fileWorker = function (target, cb) {
+  target.file.open(function (err, file) {
+    if (err) return cb(err)
+    file.write(target.offset, target.buf.slice(target.from, target.to), cb)
+  })
+}
 
 var TMP
 try {
@@ -126,15 +135,25 @@ Storage.prototype.put = function (index, buf, cb) {
   } else {
     var targets = self.chunkMap[index]
     if (!targets) return nextTick(cb, new Error('no files matching the request range'))
-    var tasks = targets.map(function (target) {
-      return function (cb) {
-        target.file.open(function (err, file) {
-          if (err) return cb(err)
-          file.write(target.offset, buf.slice(target.from, target.to), cb)
+    targets.forEach(function(target) {
+      if (!toWriteFiles[target.file.path]) {
+        toWriteFiles[target.file.path] = queue(fileWorker, 2)
+        toWriteFiles[target.file.path].drain(function() {
+          console.log('finished file write')
         })
       }
+      target.buf = buf
+      toWriteFiles[target.file.path].push(target, cb)
     })
-    parallel(tasks, cb)
+    // var tasks = targets.map(function (target) {
+    //   return function (cb) {
+    //     target.file.open(function (err, file) {
+    //       if (err) return cb(err)
+    //       file.write(target.offset, buf.slice(target.from, target.to), cb)
+    //     })
+    //   }
+    // })
+    // parallel(tasks, cb)
   }
 }
 
